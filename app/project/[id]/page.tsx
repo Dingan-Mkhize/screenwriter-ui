@@ -29,6 +29,21 @@ import LoglineDisplay from '@/app/components/LoglineDisplay';
 type FieldMap = Record<string, string>;
 type EntryModeMap = Record<string, FieldEntryMode>;
 
+const TYPE_NUMS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+type TypeNum = typeof TYPE_NUMS[number];
+
+const ENNEAGRAM: Record<TypeNum, { label: string; core_fear: string; core_desire: string }> = {
+  1: { label: 'The Reformer',      core_fear: 'Being corrupt or defective',               core_desire: 'To be good and have integrity' },
+  2: { label: 'The Helper',        core_fear: 'Being unloved or unwanted',                core_desire: 'To be loved and needed' },
+  3: { label: 'The Achiever',      core_fear: 'Being worthless or a failure',             core_desire: 'To feel valuable and worthwhile' },
+  4: { label: 'The Individualist', core_fear: 'Having no identity or significance',       core_desire: 'To find themselves and their significance' },
+  5: { label: 'The Investigator',  core_fear: 'Being incapable or incompetent',           core_desire: 'To be capable and competent' },
+  6: { label: 'The Loyalist',      core_fear: 'Being without guidance or support',        core_desire: 'To have security and support' },
+  7: { label: 'The Enthusiast',    core_fear: 'Being deprived or trapped in pain',        core_desire: 'To be happy and satisfied' },
+  8: { label: 'The Challenger',    core_fear: 'Being controlled or harmed by others',     core_desire: 'To protect themselves and control their destiny' },
+  9: { label: 'The Peacemaker',    core_fear: 'Loss, separation, or fragmentation',       core_desire: 'To have inner stability and peace of mind' },
+};
+
 export default function ProjectPage() {
   const params = useParams();
   const router = useRouter();
@@ -106,7 +121,18 @@ export default function ProjectPage() {
 
     const stage = project.current_stage;
     const input = buildInput(stage, fields);
-    const entryMode: EntryMode = Object.keys(entryModes).length > 0 ? entryModes : 'manual';
+
+    let entryMode: EntryMode;
+    if (stage === 'character_system') {
+      const anyNameGenerated = Object.entries(entryModes).some(
+        ([k, v]) => k.startsWith('type_') && k.endsWith('_name') && v === 'generated'
+      );
+      entryMode = anyNameGenerated
+        ? 'generated'
+        : { protagonist: 'manual', supporting: 'manual', relational_map: 'generated' };
+    } else {
+      entryMode = Object.keys(entryModes).length > 0 ? entryModes : 'manual';
+    }
 
     try {
       const result = await advanceStage(projectId, stage, input, entryMode);
@@ -288,26 +314,137 @@ function StageForm({
         </PipelineStage>
       );
 
-    case 'character_system':
+    case 'character_system': {
+      const activeNums      = TYPE_NUMS.filter(n => fields[`type_${n}_active`] === 'true');
+      const protagonistCount = activeNums.filter(n => fields[`type_${n}_role`] === 'protagonist').length;
+      const antagonistCount  = activeNums.filter(n => fields[`type_${n}_role`] === 'antagonist').length;
+      const supportingCount  = activeNums.filter(n => fields[`type_${n}_role`] === 'supporting').length;
+      const isValid = protagonistCount === 1 && antagonistCount >= 1 && supportingCount >= 1;
+      const bibleName = project.story_bible?.protagonist ?? '';
+
       return (
         <PipelineStage
           title="Character System"
-          description="Enneagram typing for the protagonist and supporting characters. Use Generate All or type manually."
+          description="Map your characters to Enneagram types. Activate a type slot, name the character, and assign their role."
           onSubmit={onSubmit}
           isSubmitting={submitting}
-          submitLabel="Generate All & Continue"
+          submitLabel="Generate Relational Map & Confirm"
+          canSubmit={isValid}
         >
-          <StageInput
-            label="Protagonist type (1–9) or leave blank to generate"
-            value={fields.protagonist_type ?? ''}
-            onChange={(v) => onFieldChange('protagonist_type', v)}
-            onGenerate={() => onGenerate('protagonist_type')}
-            isGenerating={isGenerating('protagonist_type')}
-            placeholder="e.g. 6"
-            hint="Generates core fear, core desire, under stress, at best — plus 3–4 supporting characters and a relational map."
-          />
+          <div className="flex flex-col gap-1">
+            {TYPE_NUMS.map(n => {
+              const isActive = fields[`type_${n}_active`] === 'true';
+              const role     = fields[`type_${n}_role`] ?? '';
+              const name     = fields[`type_${n}_name`] ?? '';
+
+              return (
+                <div
+                  key={n}
+                  className={`rounded border transition-colors ${
+                    isActive ? 'border-neutral-600 bg-neutral-950' : 'border-neutral-800'
+                  }`}
+                >
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono text-neutral-600 w-4 shrink-0">{n}</span>
+                      <span className={`text-sm font-medium ${isActive ? 'text-white' : 'text-neutral-500'}`}>
+                        {ENNEAGRAM[n].label}
+                      </span>
+                      {isActive && role && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          role === 'protagonist' ? 'bg-white text-black' :
+                          role === 'antagonist'  ? 'bg-red-950 text-red-400 border border-red-900' :
+                                                  'bg-neutral-800 text-neutral-400'
+                        }`}>
+                          {role}
+                        </span>
+                      )}
+                    </div>
+                    {!isActive ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onFieldChange(`type_${n}_active`, 'true');
+                          onFieldChange(`type_${n}_role`, 'supporting');
+                        }}
+                        className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
+                      >
+                        + Fill
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onFieldChange(`type_${n}_active`, '');
+                          onFieldChange(`type_${n}_name`, '');
+                          onFieldChange(`type_${n}_role`, '');
+                        }}
+                        className="text-xs text-neutral-700 hover:text-neutral-500 transition-colors"
+                      >
+                        × Skip
+                      </button>
+                    )}
+                  </div>
+
+                  {isActive && (
+                    <div className="px-4 pb-4 pt-1 flex flex-col gap-3 border-t border-neutral-800">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={name}
+                          onChange={(e) => onFieldChange(`type_${n}_name`, e.target.value)}
+                          placeholder="Character name"
+                          className="flex-1 px-3 py-2 text-sm bg-neutral-900 border border-neutral-700 rounded text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onGenerate(`type_${n}_name`)}
+                          disabled={isGenerating(`type_${n}_name`)}
+                          className="shrink-0 px-3 py-2 text-xs font-medium rounded border border-neutral-600 text-neutral-300 hover:border-neutral-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {isGenerating(`type_${n}_name`) ? 'Generating…' : 'Generate'}
+                        </button>
+                      </div>
+
+                      <div className="flex gap-2">
+                        {(['protagonist', 'antagonist', 'supporting'] as const).map(r => (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => {
+                              onFieldChange(`type_${n}_role`, r);
+                              if (r === 'protagonist' && !name && bibleName) {
+                                onFieldChange(`type_${n}_name`, bibleName);
+                              }
+                            }}
+                            className={`px-3 py-1 text-xs font-medium rounded capitalize transition-colors ${
+                              role === r
+                                ? 'bg-white text-black'
+                                : 'border border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {!isValid && activeNums.length > 0 && (
+            <p className="text-xs text-amber-700 leading-relaxed">
+              {protagonistCount === 0 && 'Assign one Protagonist. '}
+              {protagonistCount > 1  && 'Only one Protagonist allowed. '}
+              {antagonistCount  === 0 && 'At least one Antagonist required. '}
+              {supportingCount  === 0 && 'At least one Supporting character required.'}
+            </p>
+          )}
         </PipelineStage>
       );
+    }
 
     case 'story_architecture':
       return (
@@ -478,10 +615,31 @@ function buildInput(stage: Stage, fields: FieldMap): Record<string, unknown> {
         structural_paradox:       fields.structural_paradox       ?? '',
       };
 
-    case 'character_system':
-      return {
-        protagonist_type: fields.protagonist_type ? parseInt(fields.protagonist_type, 10) : undefined,
-      };
+    case 'character_system': {
+      const activeNums   = TYPE_NUMS.filter(n => fields[`type_${n}_active`] === 'true');
+      const protagonistN = activeNums.find(n => fields[`type_${n}_role`] === 'protagonist');
+      const otherNums    = activeNums.filter(n => fields[`type_${n}_role`] !== 'protagonist');
+
+      const protagonist = protagonistN != null ? {
+        type:        protagonistN,
+        name:        fields[`type_${protagonistN}_name`] ?? '',
+        label:       ENNEAGRAM[protagonistN].label,
+        core_fear:   ENNEAGRAM[protagonistN].core_fear,
+        core_desire: ENNEAGRAM[protagonistN].core_desire,
+      } : null;
+
+      const supporting = otherNums.map(n => ({
+        role:        fields[`type_${n}_role`] || 'supporting',
+        type:        n,
+        name:        fields[`type_${n}_name`] ?? '',
+        label:       ENNEAGRAM[n].label,
+        core_fear:   ENNEAGRAM[n].core_fear,
+        core_desire: ENNEAGRAM[n].core_desire,
+        dynamic:     '',
+      }));
+
+      return { protagonist, supporting, relational_map: fields.relational_map ?? '' };
+    }
 
     case 'story_architecture':
       return {
